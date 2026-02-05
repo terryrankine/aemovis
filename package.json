@@ -17,6 +17,7 @@
   "dependencies": {
     "echarts": "^6.0.0",
     "ky": "^1.14.3",
+    "leaflet": "^1.9.4",
     "nanostores": "^1.1.0",
     "papaparse": "^5.5.3"
   }

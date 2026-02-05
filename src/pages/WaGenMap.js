@@ -1,10 +1,13 @@
 /**
- * WA Generation Map — Scatter plot of WA facilities positioned by
- * lat/lon, sized by current output, colored by fuel type.
+ * WA Generation Map — Geo map with scatter overlay of WA facilities
+ * positioned by lat/lon, sized by current output, colored by fuel type.
+ *
+ * Uses ECharts geo component with Australia states GeoJSON.
  *
  * Data sources: generation.csv (I01 for current output, MAX_GEN_CAPACITY),
  *               facility-meta-fuelmix.csv (lat/lon, display names, fuel types)
  */
+import * as echarts from 'echarts';
 import wemApi from '../api/WemApi.js';
 import { wemGeneration, wemFacilityMeta } from '../store/atoms.js';
 import { fetchIfStale } from '../store/actions.js';
@@ -12,6 +15,10 @@ import { registerPoll } from '../store/poller.js';
 import { WEM_GEN_FRESHNESS, STATIC_FRESHNESS } from '../api/config.js';
 import { fuel as fuelColors } from '../theme/colors.js';
 import { ChartController } from '../charts/ChartController.js';
+import australiaGeoJson from '../assets/australia-states.json';
+
+// Register Australia map once
+echarts.registerMap('australia', australiaGeoJson);
 
 // Fuel mapping (same as wemTransform)
 const FUEL_MAP = {
@@ -71,6 +78,7 @@ export function buildOption(facilities) {
   const series = Object.entries(byFuel).map(([fuel, items]) => ({
     name: fuel,
     type: 'scatter',
+    coordinateSystem: 'geo',
     data: items.map(f => ({
       value: [f.lon, f.lat, Math.max(f.mw, 0)],
       name: f.name,
@@ -78,8 +86,8 @@ export function buildOption(facilities) {
     })),
     symbolSize: (val) => {
       const mw = val[2];
-      if (mw <= 0) return 4;
-      return Math.max(6, Math.min(40, Math.sqrt(mw) * 2));
+      if (mw <= 0) return 6;
+      return Math.max(8, Math.min(50, Math.sqrt(mw) * 2.5));
     },
     itemStyle: { color: fuelColors[fuel] || '#6b778c', opacity: 0.85 },
     emphasis: {
@@ -101,25 +109,26 @@ export function buildOption(facilities) {
       },
     },
     legend: { top: 0, type: 'scroll', textStyle: { fontSize: 11 } },
-    grid: { left: 60, right: 30, bottom: 50, top: 60 },
-    xAxis: {
-      type: 'value',
-      name: 'Longitude',
-      nameLocation: 'middle',
-      nameGap: 30,
-      min: 114,
-      max: 130,
-      axisLabel: { fontSize: 10 },
-    },
-    yAxis: {
-      type: 'value',
-      name: 'Latitude',
-      nameLocation: 'middle',
-      nameGap: 40,
-      min: -36,
-      max: -20,
-      inverse: true,
-      axisLabel: { fontSize: 10 },
+    geo: {
+      map: 'australia',
+      roam: true,
+      zoom: 1.8,
+      center: [122, -28],
+      label: { show: false },
+      itemStyle: {
+        areaColor: '#e8e8e8',
+        borderColor: '#999',
+        borderWidth: 0.5,
+      },
+      emphasis: {
+        itemStyle: {
+          areaColor: '#d4d4d4',
+        },
+        label: { show: false },
+      },
+      regions: [
+        { name: 'Western Australia', itemStyle: { areaColor: '#d9e8f5' } },
+      ],
     },
     series,
   };

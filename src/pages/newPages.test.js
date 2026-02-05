@@ -4,38 +4,46 @@ import { buildOption as buildInterchangeOption, buildGenOption } from './NetInte
 import { normaliseReserves, buildOption as buildReservesOption } from './WaReserves.js';
 import { buildFacilities, buildOption as buildMapOption } from './WaGenMap.js';
 
-// ── FCAS Prices ───────────────────────────────────────────────────
+// ── FCAS Prices (Heatmap) ─────────────────────────────────────────
 
-describe('FcasPrices buildOption', () => {
+describe('FcasPrices buildOption (heatmap)', () => {
   const makePrices = () => [
     { regionId: 'NSW1', rrp: 50, raiseRegRrp: 10, lowerRegRrp: 5, raise6SecRrp: 0.5, lower6SecRrp: 0.3, raise60SecRrp: 1, lower60SecRrp: 0.8, raise5MinRrp: 0.2, lower5MinRrp: 0.1, raise1SecRrp: 0.01, lower1SecRrp: 0.02 },
     { regionId: 'VIC1', rrp: 30, raiseRegRrp: 8, lowerRegRrp: 3, raise6SecRrp: 0.4, lower6SecRrp: 0.2, raise60SecRrp: 0.9, lower60SecRrp: 0.7, raise5MinRrp: 0.15, lower5MinRrp: 0.05, raise1SecRrp: 0.005, lower1SecRrp: 0.01 },
   ];
 
-  it('creates one bar series per region', () => {
+  it('creates heatmap series', () => {
     const opt = buildFcasOption(makePrices());
-    expect(opt.series).toHaveLength(2);
-    expect(opt.series[0].name).toBe('NSW');
-    expect(opt.series[1].name).toBe('VIC');
+    expect(opt.series).toHaveLength(1);
+    expect(opt.series[0].type).toBe('heatmap');
   });
 
-  it('has 10 FCAS categories on x-axis', () => {
+  it('has 10 FCAS services on x-axis', () => {
     const opt = buildFcasOption(makePrices());
     expect(opt.xAxis.data).toHaveLength(10);
     expect(opt.xAxis.data).toContain('Raise Reg');
     expect(opt.xAxis.data).toContain('Lower 5m');
   });
 
-  it('uses region colors', () => {
+  it('has regions on y-axis', () => {
     const opt = buildFcasOption(makePrices());
-    expect(opt.series[0].itemStyle.color).toBe('#3379bf'); // NSW1
-    expect(opt.series[1].itemStyle.color).toBe('#6C3078'); // VIC1
+    expect(opt.yAxis.data).toHaveLength(2);
+    expect(opt.yAxis.data).toContain('NSW');
+    expect(opt.yAxis.data).toContain('VIC');
   });
 
-  it('each series has 10 data points', () => {
+  it('heatmap data has 20 points (2 regions x 10 services)', () => {
     const opt = buildFcasOption(makePrices());
-    expect(opt.series[0].data).toHaveLength(10);
-    expect(opt.series[0].data[0]).toBe(10); // raiseRegRrp
+    expect(opt.series[0].data).toHaveLength(20);
+    // Each data point is [xIndex, yIndex, value]
+    expect(opt.series[0].data[0]).toHaveLength(3);
+  });
+
+  it('has visualMap for color scale', () => {
+    const opt = buildFcasOption(makePrices());
+    expect(opt.visualMap).toBeDefined();
+    expect(opt.visualMap.min).toBe(0);
+    expect(opt.visualMap.max).toBeGreaterThan(0);
   });
 });
 
@@ -153,7 +161,7 @@ describe('WaReserves buildOption', () => {
   });
 });
 
-// ── WA Gen Map ────────────────────────────────────────────────────
+// ── WA Gen Map (Geo) ──────────────────────────────────────────────
 
 describe('WaGenMap buildFacilities', () => {
   const meta = [
@@ -183,8 +191,37 @@ describe('WaGenMap buildFacilities', () => {
   });
 });
 
-describe('WaGenMap buildOption', () => {
-  it('creates scatter series grouped by fuel type', () => {
+describe('WaGenMap buildOption (geo)', () => {
+  it('creates scatter series with geo coordinate system', () => {
+    const facilities = [
+      { name: 'A', code: 'A', fuel: 'Coal', lat: -33, lon: 116, mw: 200, capacity: 340 },
+      { name: 'B', code: 'B', fuel: 'Wind', lat: -35, lon: 117, mw: 15, capacity: 22 },
+    ];
+    const opt = buildMapOption(facilities);
+    expect(opt.series).toHaveLength(2); // Coal + Wind
+    expect(opt.series[0].coordinateSystem).toBe('geo');
+  });
+
+  it('has geo component configured for Australia', () => {
+    const facilities = [
+      { name: 'A', code: 'A', fuel: 'Wind', lat: -33.5, lon: 116.2, mw: 50, capacity: 100 },
+    ];
+    const opt = buildMapOption(facilities);
+    expect(opt.geo).toBeDefined();
+    expect(opt.geo.map).toBe('australia');
+    expect(opt.geo.roam).toBe(true);
+  });
+
+  it('positions bubbles by lon/lat in data values', () => {
+    const facilities = [
+      { name: 'A', code: 'A', fuel: 'Wind', lat: -33.5, lon: 116.2, mw: 50, capacity: 100 },
+    ];
+    const opt = buildMapOption(facilities);
+    expect(opt.series[0].data[0].value[0]).toBe(116.2); // lon
+    expect(opt.series[0].data[0].value[1]).toBe(-33.5); // lat
+  });
+
+  it('groups by fuel type for legend filtering', () => {
     const facilities = [
       { name: 'A', code: 'A', fuel: 'Coal', lat: -33, lon: 116, mw: 200, capacity: 340 },
       { name: 'B', code: 'B', fuel: 'Wind', lat: -35, lon: 117, mw: 15, capacity: 22 },
@@ -194,14 +231,5 @@ describe('WaGenMap buildOption', () => {
     expect(opt.series).toHaveLength(2); // Coal + Wind
     const coalSeries = opt.series.find(s => s.name === 'Coal');
     expect(coalSeries.data).toHaveLength(2);
-  });
-
-  it('positions bubbles by lon/lat', () => {
-    const facilities = [
-      { name: 'A', code: 'A', fuel: 'Wind', lat: -33.5, lon: 116.2, mw: 50, capacity: 100 },
-    ];
-    const opt = buildMapOption(facilities);
-    expect(opt.series[0].data[0].value[0]).toBe(116.2); // lon
-    expect(opt.series[0].data[0].value[1]).toBe(-33.5); // lat
   });
 });
