@@ -30,6 +30,16 @@ const FUEL_MAP = {
 };
 function mapFuel(f) { return FUEL_MAP[f] || f; }
 
+// Coordinate corrections for facilities with wrong lat/lon in AEMO metadata
+// AEMO lists these at Perth CBD (-31.95, 115.86) instead of actual locations
+// Real coordinates from Global Energy Observatory & Wikipedia
+const COORD_FIXES = {
+  'COCKBURN_CCG1':           { lat: -32.200, lon: 115.774 },  // Naval Base, 42 Hope Valley Rd
+  'KWINANA_GT2':             { lat: -32.228, lon: 115.773 },  // Kwinana industrial area
+  'KWINANA_GT3':             { lat: -32.228, lon: 115.773 },  // Kwinana industrial area
+  'PERTHENERGY_KWINANA_GT1': { lat: -32.228, lon: 115.773 },  // Kwinana industrial area
+};
+
 export function buildFacilities(generationRows, facilityMeta) {
   // Build meta lookup: code → { name, fuel, lat, lon }
   const metaMap = new Map();
@@ -37,8 +47,16 @@ export function buildFacilities(generationRows, facilityMeta) {
     const code = String(fac.FACILITY_CODE || fac.Facility_Code || '').replace(/"/g, '');
     const name = String(fac.DISPLAY_NAME || fac.FACILITY_CODE || '').replace(/"/g, '');
     const fuel = mapFuel(String(fac.PRIMARY_FUEL || fac.FACILITY_TYPE || '').replace(/"/g, ''));
-    const lat = parseFloat(String(fac.LATITUDE || '').replace(/"/g, ''));
-    const lon = parseFloat(String(fac.LONGITUDE || '').replace(/"/g, ''));
+    let lat = parseFloat(String(fac.LATITUDE || '').replace(/"/g, ''));
+    let lon = parseFloat(String(fac.LONGITUDE || '').replace(/"/g, ''));
+
+    // Apply coordinate fixes for facilities with wrong AEMO metadata
+    const fix = COORD_FIXES[code];
+    if (fix) {
+      lat = fix.lat;
+      lon = fix.lon;
+    }
+
     if (code && !isNaN(lat) && !isNaN(lon)) {
       metaMap.set(code, { name, fuel, lat, lon });
     }
@@ -114,6 +132,7 @@ export function buildOption(facilities) {
       roam: true,
       zoom: 1.8,
       center: [122, -28],
+      silent: true,  // Disable all mouse events on the geo layer
       label: { show: false },
       itemStyle: {
         areaColor: '#e8e8e8',
@@ -121,10 +140,7 @@ export function buildOption(facilities) {
         borderWidth: 0.5,
       },
       emphasis: {
-        itemStyle: {
-          areaColor: '#d4d4d4',
-        },
-        label: { show: false },
+        disabled: true,  // Disable hover emphasis on geo regions
       },
       regions: [
         { name: 'Western Australia', itemStyle: { areaColor: '#d9e8f5' } },
