@@ -40,6 +40,20 @@ const COORD_FIXES = {
   'PERTHENERGY_KWINANA_GT1': { lat: -32.228, lon: 115.773 },  // Kwinana industrial area
 };
 
+/**
+ * Extract the AS_AT timestamp from generation data (most recent interval time).
+ * @param {object[]} generationRows
+ * @returns {string|null}
+ */
+export function extractDataTimestamp(generationRows) {
+  if (!generationRows || generationRows.length === 0) return null;
+  for (const row of generationRows) {
+    const asAt = row.AS_AT || row.As_At;
+    if (asAt) return String(asAt).trim();
+  }
+  return null;
+}
+
 export function buildFacilities(generationRows, facilityMeta) {
   // Build meta lookup: code → { name, fuel, lat, lon }
   const metaMap = new Map();
@@ -150,7 +164,30 @@ export function buildOption(facilities) {
   };
 }
 
-function updateKpi(container, facilities) {
+function formatTimestamp(ts) {
+  if (!ts) return 'Unknown';
+  // Parse "2026-02-05 12:00:00" format
+  const d = new Date(ts.replace(' ', 'T'));
+  if (isNaN(d.getTime())) return ts;
+
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMins = Math.floor(diffMs / 60000);
+
+  // Format time as HH:MM
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const timeStr = `${hh}:${mm}`;
+
+  // Show relative age
+  if (diffMins < 1) return `${timeStr} (just now)`;
+  if (diffMins < 60) return `${timeStr} (${diffMins}m ago)`;
+  const diffHrs = Math.floor(diffMins / 60);
+  if (diffHrs < 24) return `${timeStr} (${diffHrs}h ago)`;
+  return ts;
+}
+
+function updateKpi(container, facilities, dataTimestamp) {
   const kpiRow = container.querySelector('.kpi-row');
   if (!kpiRow || facilities.length === 0) return;
 
@@ -159,6 +196,10 @@ function updateKpi(container, facilities) {
   const totalCap = facilities.reduce((s, f) => s + f.capacity, 0);
 
   kpiRow.innerHTML = `
+    <div class="kpi">
+      <span class="kpi-label">Data Time</span>
+      <span class="kpi-value" style="color:#666; font-size:0.9em">${formatTimestamp(dataTimestamp)}</span>
+    </div>
     <div class="kpi">
       <span class="kpi-label">Facilities</span>
       <span class="kpi-value" style="color:#333842">${facilities.length}</span>
@@ -198,9 +239,10 @@ export function renderWaGenMap(container, cleanupFns) {
     const facilities = buildFacilities(genState.data, metaState.data);
     if (facilities.length === 0) return;
 
+    const dataTimestamp = extractDataTimestamp(genState.data);
     const option = buildOption(facilities);
     ctrl.setOption(option);
-    updateKpi(container, facilities);
+    updateKpi(container, facilities, dataTimestamp);
   };
 
   const unsubGen = wemGeneration.listen(render);
