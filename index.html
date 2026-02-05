@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self' https://dashboards.public.aemo.com.au https://data.wa.aemo.com.au ws: wss:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self';">
+  <title>AEMOVis</title>
+  <link rel="icon" href="/favicon.ico" />
+  <script type="module" src="/src/main.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <h1>AEMOVis</h1>
+      <p class="subtitle">Australian Energy Market Visualisation</p>
+    </header>
+    <nav id="tabs"></nav>
+    <main id="page"></main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "aemovis",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vite": "^7.2.4",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "echarts": "^6.0.0",
+    "ky": "^1.14.3",
+    "nanostores": "^1.1.0",
+    "papaparse": "^5.5.3"
+  }
+}
