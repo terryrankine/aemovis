@@ -189,17 +189,20 @@ export function dailyAveragePrices(pulseRows) {
 }
 
 /**
- * Build a stacked generation dispatch from facility-intervals-last96.csv
+ * Build a stacked generation dispatch from generation.csv (I01–I48 pivot)
  * joined with facility-meta-fuelmix.csv.
  *
- * @param {object[]} intervalRows - Parsed facility-intervals-last96.csv rows
- *   Expected columns: FACILITY_CODE, PERIOD, ACTUAL_MW (plus others we ignore)
- * @param {object[]} facilityMeta - Parsed facility-meta-fuelmix.csv rows
- * @returns {{ periods: string[], seriesByFuel: Object<string, number[]>, totalByPeriod: number[] }}
+ * generation.csv has one row per facility with columns I01 (most recent)
+ * through I48 (oldest), each representing a 30-min interval.
+ * The AS_AT column gives the timestamp of I01.
+ *
+ * @param {object[]} generationRows - Parsed generation.csv rows
+ * @param {object[]} facilityMeta   - Parsed facility-meta-fuelmix.csv rows
+ * @returns {{ periods: string[], seriesByFuel: Object<string, number[]>, totalByPeriod: number[], capacityByFuel: Object<string, number> }}
  */
-export function buildDispatchStack(intervalRows, facilityMeta) {
-  if (!intervalRows || intervalRows.length === 0) {
-    return { periods: [], seriesByFuel: Object.create(null), totalByPeriod: [] };
+export function buildDispatchStack(generationRows, facilityMeta) {
+  if (!generationRows || generationRows.length === 0) {
+    return { periods: [], seriesByFuel: Object.create(null), totalByPeriod: [], capacityByFuel: Object.create(null) };
   }
 
   // Build facility → fuel lookup
@@ -210,45 +213,92 @@ export function buildDispatchStack(intervalRows, facilityMeta) {
     if (code && fuel) fuelLookup.set(code, mapFuel(fuel));
   }
 
-  // Group by PERIOD → sum ACTUAL_MW per fuel type
-  const periodMap = Object.create(null); // period → { fuel → MW }
-  for (const row of intervalRows) {
-    const mw = row.ACTUAL_MW ?? row.Actual_MW ?? row.MW;
-    if (typeof mw !== 'number' || mw <= 0) continue;
+  // Determine anchor timestamp from AS_AT (first row that has it)
+  let anchorTime = null;
+  for (const row of generationRows) {
+    const at = row.AS_AT || row.As_At;
+    if (at) {
+      anchorTime = new Date(String(at).trim().replace(' ', 'T'));
+      break;
+    }
+  }
+  if (!anchorTime || isNaN(anchorTime.getTime())) {
+    // Fallback: use current time rounded to nearest 30min
+    anchorTime = new Date();
+    anchorTime.setMinutes(anchorTime.getMinutes() >= 30 ? 30 : 0, 0, 0);
+  }
 
-    const period = row.PERIOD || row.Trading_Interval || row.TRADING_DAY_INTERVAL || '';
-    if (!period) continue;
+  // Find which I-columns exist (I01–I48)
+  const iCols = [];
+  for (let n = 1; n <= 48; n++) {
+    const key = `I${String(n).padStart(2, '0')}`;
+    if (generationRows[0][key] !== undefined) iCols.push(key);
+  }
+  if (iCols.length === 0) {
+    return { periods: [], seriesByFuel: Object.create(null), totalByPeriod: [] };
+  }
 
+  // Build period timestamps: I01 = anchor, I02 = anchor - 30min, etc.
+  // Reverse so index 0 is oldest (I48) for chronological chart order
+  const fmt = (d) => {
+    const y = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');
+    const h = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${y}-${mo}-${da} ${h}:${mi}`;
+  };
+
+  // iCols[0] = I01 (most recent), iCols[last] = I48 (oldest)
+  // We want chronological order: oldest first
+  const periodTimestamps = iCols.map((_, i) => {
+    const t = new Date(anchorTime.getTime() - i * 30 * 60 * 1000);
+    return fmt(t);
+  }).reverse();
+
+  // Reversed column order so index 0 = oldest interval
+  const colsChron = [...iCols].reverse();
+
+  // Aggregate MW by fuel type per interval
+  const fuelSet = new Set();
+  const fuelByInterval = Object.create(null); // fuel → number[] (per interval)
+
+  for (const row of generationRows) {
     const code = row.FACILITY_CODE || row.PARTICIPANT_CODE || row.Facility_Code || '';
     const fuel = fuelLookup.get(code) || 'Other';
 
-    if (!periodMap[period]) periodMap[period] = Object.create(null);
-    periodMap[period][fuel] = (periodMap[period][fuel] || 0) + mw;
+    for (let i = 0; i < colsChron.length; i++) {
+      const mw = row[colsChron[i]];
+      if (typeof mw !== 'number' || mw <= 0) continue;
+
+      fuelSet.add(fuel);
+      if (!fuelByInterval[fuel]) fuelByInterval[fuel] = new Array(colsChron.length).fill(0);
+      fuelByInterval[fuel][i] += mw;
+    }
   }
 
-  // Sort periods chronologically (string sort works for YYYY-MM-DD HH:MM:SS)
-  const periods = Object.keys(periodMap).sort();
-
-  // Collect all fuel types across all periods
-  const fuelSet = new Set();
-  for (const p of periods) {
-    for (const f of Object.keys(periodMap[p])) fuelSet.add(f);
-  }
-
-  // Build series arrays, one per fuel type
   const seriesByFuel = Object.create(null);
   for (const fuel of fuelSet) {
-    seriesByFuel[fuel] = periods.map(p => periodMap[p][fuel] || 0);
+    seriesByFuel[fuel] = fuelByInterval[fuel];
   }
 
-  // Total per period
-  const totalByPeriod = periods.map(p => {
+  const totalByPeriod = periodTimestamps.map((_, i) => {
     let sum = 0;
-    for (const fuel of Object.keys(periodMap[p])) sum += periodMap[p][fuel];
+    for (const fuel of Object.keys(seriesByFuel)) sum += seriesByFuel[fuel][i];
     return sum;
   });
 
-  return { periods, seriesByFuel, totalByPeriod };
+  // Aggregate MAX_GEN_CAPACITY by fuel type (for utilization %)
+  const capacityByFuel = Object.create(null);
+  for (const row of generationRows) {
+    const cap = row.MAX_GEN_CAPACITY ?? row.Max_Gen_Capacity;
+    if (typeof cap !== 'number' || cap <= 0) continue;
+    const code = row.FACILITY_CODE || row.PARTICIPANT_CODE || row.Facility_Code || '';
+    const fuel = fuelLookup.get(code) || 'Other';
+    capacityByFuel[fuel] = (capacityByFuel[fuel] || 0) + cap;
+  }
+
+  return { periods: periodTimestamps, seriesByFuel, totalByPeriod, capacityByFuel };
 }
 
 /**

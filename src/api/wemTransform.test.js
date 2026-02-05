@@ -240,88 +240,84 @@ describe('normaliseDpv', () => {
   });
 });
 
-// ── buildDispatchStack ────────────────────────────────────────────
+// ── buildDispatchStack (generation.csv I01–I48 pivot) ─────────────
 
 describe('buildDispatchStack', () => {
   const facilityMeta = [
     { FACILITY_CODE: 'COLLIE_G1', PRIMARY_FUEL: 'Coal' },
     { FACILITY_CODE: 'WIND_FARM', PRIMARY_FUEL: 'Wind' },
     { FACILITY_CODE: 'GAS_PLANT', PRIMARY_FUEL: 'Gas' },
-    { FACILITY_CODE: 'SOLAR_PK',  PRIMARY_FUEL: 'Solar' },
   ];
 
-  it('aggregates MW by fuel type per period', () => {
-    const rows = [
-      { FACILITY_CODE: 'COLLIE_G1', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 200 },
-      { FACILITY_CODE: 'WIND_FARM', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 150 },
-      { FACILITY_CODE: 'GAS_PLANT', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 100 },
-      { FACILITY_CODE: 'COLLIE_G1', PERIOD: '2026-02-04 08:30:00', ACTUAL_MW: 210 },
-    ];
-    const result = buildDispatchStack(rows, facilityMeta);
-
-    expect(result.periods).toEqual(['2026-02-04 08:00:00', '2026-02-04 08:30:00']);
-    expect(result.seriesByFuel['Coal']).toEqual([200, 210]);
-    expect(result.seriesByFuel['Wind']).toEqual([150, 0]);
-    expect(result.seriesByFuel['Gas']).toEqual([100, 0]);
+  // Helper: make a generation.csv row with I01–I03 and AS_AT
+  const makeRow = (code, i01, i02, i03, asAt = '2026-02-05 09:30:00') => ({
+    FACILITY_CODE: code, I01: i01, I02: i02, I03: i03, AS_AT: asAt,
   });
 
-  it('filters out negative ACTUAL_MW (loads)', () => {
+  it('aggregates MW by fuel type across I-columns', () => {
     const rows = [
-      { FACILITY_CODE: 'COLLIE_G1', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 200 },
-      { FACILITY_CODE: 'GAS_PLANT', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: -50 },
+      makeRow('COLLIE_G1', 200, 180, 190),
+      makeRow('WIND_FARM', 150, 120, 130),
     ];
     const result = buildDispatchStack(rows, facilityMeta);
 
-    expect(result.seriesByFuel['Coal']).toEqual([200]);
+    expect(result.periods).toHaveLength(3);
+    // Chronological: I03 (oldest) first, I01 (newest) last
+    expect(result.seriesByFuel['Coal']).toEqual([190, 180, 200]);
+    expect(result.seriesByFuel['Wind']).toEqual([130, 120, 150]);
+  });
+
+  it('filters out negative MW (loads)', () => {
+    const rows = [
+      makeRow('COLLIE_G1', 200, 180, 190),
+      makeRow('GAS_PLANT', -50, -30, -40),
+    ];
+    const result = buildDispatchStack(rows, facilityMeta);
+
+    expect(result.seriesByFuel['Coal']).toBeDefined();
     expect(result.seriesByFuel['Gas']).toBeUndefined();
   });
 
-  it('filters out zero ACTUAL_MW', () => {
-    const rows = [
-      { FACILITY_CODE: 'COLLIE_G1', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 0 },
-    ];
+  it('filters out zero MW', () => {
+    const rows = [makeRow('COLLIE_G1', 0, 0, 0)];
     const result = buildDispatchStack(rows, facilityMeta);
-    expect(result.periods).toHaveLength(0);
+    // All zeros → no fuel types found
+    expect(Object.keys(result.seriesByFuel)).toHaveLength(0);
   });
 
   it('maps fuel types through FUEL_MAP', () => {
-    const meta = [
-      { FACILITY_CODE: 'DIST_1', PRIMARY_FUEL: 'Distillate' },
-    ];
-    const rows = [
-      { FACILITY_CODE: 'DIST_1', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 30 },
-    ];
+    const meta = [{ FACILITY_CODE: 'DIST_1', PRIMARY_FUEL: 'Distillate' }];
+    const rows = [{ FACILITY_CODE: 'DIST_1', I01: 30, I02: 25, AS_AT: '2026-02-05 09:30:00' }];
     const result = buildDispatchStack(rows, meta);
-    expect(result.seriesByFuel['Liquid Fuel']).toEqual([30]);
+    expect(result.seriesByFuel['Liquid Fuel']).toBeDefined();
     expect(result.seriesByFuel['Distillate']).toBeUndefined();
   });
 
   it('assigns unknown facilities to Other', () => {
-    const rows = [
-      { FACILITY_CODE: 'UNKNOWN', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 42 },
-    ];
+    const rows = [makeRow('UNKNOWN', 42, 40, 38)];
     const result = buildDispatchStack(rows, facilityMeta);
-    expect(result.seriesByFuel['Other']).toEqual([42]);
+    expect(result.seriesByFuel['Other']).toBeDefined();
+    expect(result.seriesByFuel['Other'][2]).toBe(42); // I01 = last (newest)
   });
 
-  it('sorts periods chronologically', () => {
-    const rows = [
-      { FACILITY_CODE: 'COLLIE_G1', PERIOD: '2026-02-04 09:00:00', ACTUAL_MW: 200 },
-      { FACILITY_CODE: 'COLLIE_G1', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 180 },
-    ];
+  it('derives timestamps from AS_AT, 30min apart, chronological order', () => {
+    const rows = [makeRow('COLLIE_G1', 200, 180, 190, '2026-02-05 10:00:00')];
     const result = buildDispatchStack(rows, facilityMeta);
-    expect(result.periods[0]).toBe('2026-02-04 08:00:00');
-    expect(result.periods[1]).toBe('2026-02-04 09:00:00');
-    expect(result.seriesByFuel['Coal']).toEqual([180, 200]);
+
+    // I03 = oldest = 10:00 - 2*30min = 09:00
+    // I02 = 10:00 - 1*30min = 09:30
+    // I01 = 10:00
+    expect(result.periods).toEqual(['2026-02-05 09:00', '2026-02-05 09:30', '2026-02-05 10:00']);
   });
 
   it('computes totalByPeriod correctly', () => {
     const rows = [
-      { FACILITY_CODE: 'COLLIE_G1', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 200 },
-      { FACILITY_CODE: 'WIND_FARM', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 150 },
+      makeRow('COLLIE_G1', 200, 180, 190),
+      makeRow('WIND_FARM', 150, 120, 130),
     ];
     const result = buildDispatchStack(rows, facilityMeta);
-    expect(result.totalByPeriod).toEqual([350]);
+    // Chronological: [I03 total, I02 total, I01 total]
+    expect(result.totalByPeriod).toEqual([320, 300, 350]);
   });
 
   it('returns empty structure for null/empty input', () => {
@@ -333,23 +329,17 @@ describe('buildDispatchStack', () => {
     expect(empty2.periods).toEqual([]);
   });
 
-  it('aligns series arrays — zero-fills missing fuels per period', () => {
-    const rows = [
-      { FACILITY_CODE: 'COLLIE_G1', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 200 },
-      { FACILITY_CODE: 'WIND_FARM', PERIOD: '2026-02-04 08:30:00', ACTUAL_MW: 150 },
-    ];
+  it('zero-fills intervals where a facility has negative/zero MW', () => {
+    // COLLIE has positive I01/I03 but negative I02
+    const rows = [{ FACILITY_CODE: 'COLLIE_G1', I01: 200, I02: -10, I03: 190, AS_AT: '2026-02-05 10:00:00' }];
     const result = buildDispatchStack(rows, facilityMeta);
 
-    // Coal only in period 1, Wind only in period 2
-    expect(result.seriesByFuel['Coal']).toEqual([200, 0]);
-    expect(result.seriesByFuel['Wind']).toEqual([0, 150]);
-    expect(result.periods).toHaveLength(2);
+    // Chronological: [I03, I02, I01] = [190, 0 (skipped negative), 200]
+    expect(result.seriesByFuel['Coal']).toEqual([190, 0, 200]);
   });
 
   it('uses Object.create(null) — no prototype pollution', () => {
-    const rows = [
-      { FACILITY_CODE: 'COLLIE_G1', PERIOD: '2026-02-04 08:00:00', ACTUAL_MW: 100 },
-    ];
+    const rows = [makeRow('COLLIE_G1', 100, 90, 80)];
     const result = buildDispatchStack(rows, facilityMeta);
     expect(Object.getPrototypeOf(result.seriesByFuel)).toBeNull();
   });

@@ -1,0 +1,198 @@
+/**
+ * WA Generation Map — Scatter plot of WA facilities positioned by
+ * lat/lon, sized by current output, colored by fuel type.
+ *
+ * Data sources: generation.csv (I01 for current output, MAX_GEN_CAPACITY),
+ *               facility-meta-fuelmix.csv (lat/lon, display names, fuel types)
+ */
+import wemApi from '../api/WemApi.js';
+import { wemGeneration, wemFacilityMeta } from '../store/atoms.js';
+import { fetchIfStale } from '../store/actions.js';
+import { registerPoll } from '../store/poller.js';
+import { WEM_GEN_FRESHNESS, STATIC_FRESHNESS } from '../api/config.js';
+import { fuel as fuelColors } from '../theme/colors.js';
+import { ChartController } from '../charts/ChartController.js';
+
+// Fuel mapping (same as wemTransform)
+const FUEL_MAP = {
+  'Wind': 'Wind', 'Gas': 'Gas', 'Natural Gas': 'Gas', 'Coal': 'Coal',
+  'Solar': 'Solar', 'Distillate': 'Liquid Fuel', 'Landfill Gas': 'Biomass',
+  'Landfill / Sewage Gas': 'Biomass', 'Dual (Gas/Distillate)': 'Gas',
+  'Battery': 'Battery', 'Battery Storage': 'Battery', 'Waste to Energy': 'Biomass',
+  'Utility Solar PV': 'Solar',
+};
+function mapFuel(f) { return FUEL_MAP[f] || f; }
+
+export function buildFacilities(generationRows, facilityMeta) {
+  // Build meta lookup: code → { name, fuel, lat, lon }
+  const metaMap = new Map();
+  for (const fac of facilityMeta) {
+    const code = String(fac.FACILITY_CODE || fac.Facility_Code || '').replace(/"/g, '');
+    const name = String(fac.DISPLAY_NAME || fac.FACILITY_CODE || '').replace(/"/g, '');
+    const fuel = mapFuel(String(fac.PRIMARY_FUEL || fac.FACILITY_TYPE || '').replace(/"/g, ''));
+    const lat = parseFloat(String(fac.LATITUDE || '').replace(/"/g, ''));
+    const lon = parseFloat(String(fac.LONGITUDE || '').replace(/"/g, ''));
+    if (code && !isNaN(lat) && !isNaN(lon)) {
+      metaMap.set(code, { name, fuel, lat, lon });
+    }
+  }
+
+  // Join with generation data
+  const facilities = [];
+  for (const row of generationRows) {
+    const code = row.FACILITY_CODE || row.PARTICIPANT_CODE || '';
+    const meta = metaMap.get(code);
+    if (!meta) continue;
+
+    const mw = row.I01 ?? 0;
+    const capacity = row.MAX_GEN_CAPACITY ?? 0;
+
+    facilities.push({
+      name: meta.name,
+      code,
+      fuel: meta.fuel,
+      lat: meta.lat,
+      lon: meta.lon,
+      mw: typeof mw === 'number' ? mw : 0,
+      capacity: typeof capacity === 'number' ? capacity : 0,
+    });
+  }
+  return facilities;
+}
+
+export function buildOption(facilities) {
+  // Group by fuel type for separate series (legend filtering)
+  const byFuel = Object.create(null);
+  for (const f of facilities) {
+    if (!byFuel[f.fuel]) byFuel[f.fuel] = [];
+    byFuel[f.fuel].push(f);
+  }
+
+  const series = Object.entries(byFuel).map(([fuel, items]) => ({
+    name: fuel,
+    type: 'scatter',
+    data: items.map(f => ({
+      value: [f.lon, f.lat, Math.max(f.mw, 0)],
+      name: f.name,
+      facility: f,
+    })),
+    symbolSize: (val) => {
+      const mw = val[2];
+      if (mw <= 0) return 4;
+      return Math.max(6, Math.min(40, Math.sqrt(mw) * 2));
+    },
+    itemStyle: { color: fuelColors[fuel] || '#6b778c', opacity: 0.85 },
+    emphasis: {
+      itemStyle: { borderColor: '#333', borderWidth: 2 },
+    },
+  }));
+
+  return {
+    tooltip: {
+      trigger: 'item',
+      formatter: (params) => {
+        const f = params.data.facility;
+        const util = f.capacity > 0 ? ((f.mw / f.capacity) * 100).toFixed(0) : '—';
+        return `<b>${f.name}</b><br/>`
+          + `${f.fuel}<br/>`
+          + `Output: ${f.mw > 0 ? f.mw.toFixed(1) : '0'} MW<br/>`
+          + `Capacity: ${f.capacity.toFixed(0)} MW<br/>`
+          + `Utilization: ${util}%`;
+      },
+    },
+    legend: { top: 0, type: 'scroll', textStyle: { fontSize: 11 } },
+    grid: { left: 60, right: 30, bottom: 50, top: 60 },
+    xAxis: {
+      type: 'value',
+      name: 'Longitude',
+      nameLocation: 'middle',
+      nameGap: 30,
+      min: 114,
+      max: 130,
+      axisLabel: { fontSize: 10 },
+    },
+    yAxis: {
+      type: 'value',
+      name: 'Latitude',
+      nameLocation: 'middle',
+      nameGap: 40,
+      min: -36,
+      max: -20,
+      inverse: true,
+      axisLabel: { fontSize: 10 },
+    },
+    series,
+  };
+}
+
+function updateKpi(container, facilities) {
+  const kpiRow = container.querySelector('.kpi-row');
+  if (!kpiRow || facilities.length === 0) return;
+
+  const generating = facilities.filter(f => f.mw > 0);
+  const totalMw = generating.reduce((s, f) => s + f.mw, 0);
+  const totalCap = facilities.reduce((s, f) => s + f.capacity, 0);
+
+  kpiRow.innerHTML = `
+    <div class="kpi">
+      <span class="kpi-label">Facilities</span>
+      <span class="kpi-value" style="color:#333842">${facilities.length}</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Generating</span>
+      <span class="kpi-value" style="color:#467822">${generating.length}</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Total Output</span>
+      <span class="kpi-value" style="color:#34b9b3">${Math.round(totalMw).toLocaleString()} MW</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Installed Capacity</span>
+      <span class="kpi-value" style="color:#3379bf">${Math.round(totalCap).toLocaleString()} MW</span>
+    </div>
+  `;
+}
+
+const fetchGeneration = (signal) => wemApi.getGeneration(signal);
+const fetchFacilityMeta = (signal) => wemApi.getFacilityMeta(signal);
+
+export function renderWaGenMap(container, cleanupFns) {
+  container.innerHTML = `
+    <div class="page-header"><h2>WA Generation Map</h2></div>
+    <div class="kpi-row"></div>
+    <div class="chart-box"></div>
+  `;
+
+  const ctrl = new ChartController(container.querySelector('.chart-box'));
+
+  const render = () => {
+    const genState = wemGeneration.get();
+    const metaState = wemFacilityMeta.get();
+    if (!genState.data || !metaState.data) return;
+
+    const facilities = buildFacilities(genState.data, metaState.data);
+    if (facilities.length === 0) return;
+
+    const option = buildOption(facilities);
+    ctrl.setOption(option);
+    updateKpi(container, facilities);
+  };
+
+  const unsubGen = wemGeneration.listen(render);
+  const unsubMeta = wemFacilityMeta.listen(render);
+
+  fetchIfStale(wemGeneration, fetchGeneration, WEM_GEN_FRESHNESS);
+  fetchIfStale(wemFacilityMeta, fetchFacilityMeta, STATIC_FRESHNESS);
+  render();
+
+  const unregGen = registerPoll('wem:generation', wemGeneration, fetchGeneration, WEM_GEN_FRESHNESS);
+  const unregMeta = registerPoll('wem:facilityMeta', wemFacilityMeta, fetchFacilityMeta, STATIC_FRESHNESS);
+
+  cleanupFns.push(() => {
+    unsubGen();
+    unsubMeta();
+    unregGen();
+    unregMeta();
+    ctrl.dispose();
+  });
+}

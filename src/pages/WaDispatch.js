@@ -9,16 +9,19 @@
 import wemApi from '../api/WemApi.js';
 import { buildDispatchStack } from '../api/wemTransform.js';
 import { normalisePulse } from '../api/wemTransform.js';
-import { wemIntervals96, wemFacilityMeta, wemPulse } from '../store/atoms.js';
+import { wemGeneration, wemFacilityMeta, wemPulse } from '../store/atoms.js';
 import { fetchIfStale } from '../store/actions.js';
 import { registerPoll } from '../store/poller.js';
-import { WEM_FRESHNESS, STATIC_FRESHNESS, FUEL_ORDER } from '../api/config.js';
+import { WEM_GEN_FRESHNESS, WEM_FRESHNESS, STATIC_FRESHNESS, FUEL_ORDER } from '../api/config.js';
 import { fuel as fuelColors } from '../theme/colors.js';
 import { ChartController } from '../charts/ChartController.js';
 
 /**
  * Build ECharts option for the stacked area + price overlay.
  * Exported for testing.
+ *
+ * Price points are filtered to the generation time range so a stale
+ * intervals CSV (different month than pulse) won't stretch the x-axis.
  */
 export function buildOption(stack, priceSeries) {
   const { periods, seriesByFuel } = stack;
@@ -42,18 +45,25 @@ export function buildOption(stack, priceSeries) {
     itemStyle: { color: fuelColors[fuel] || '#6b778c' },
   }));
 
-  // Price overlay on secondary y-axis
-  if (priceSeries && priceSeries.length > 0) {
-    series.push({
-      name: 'Price',
-      type: 'line',
-      yAxisIndex: 1,
-      symbol: 'none',
-      lineStyle: { color: '#d4254e', width: 2 },
-      itemStyle: { color: '#d4254e' },
-      data: priceSeries.map(p => [p.settlementDate, p.rrp]),
-      z: 10,
-    });
+  // Price overlay on secondary y-axis — only points within generation range
+  if (priceSeries && priceSeries.length > 0 && periods.length > 0) {
+    const tMin = periods[0];
+    const tMax = periods[periods.length - 1];
+    const filtered = priceSeries.filter(p =>
+      p.settlementDate >= tMin && p.settlementDate <= tMax && p.rrp != null
+    );
+    if (filtered.length > 0) {
+      series.push({
+        name: 'Price',
+        type: 'line',
+        yAxisIndex: 1,
+        symbol: 'none',
+        lineStyle: { color: '#d4254e', width: 2 },
+        itemStyle: { color: '#d4254e' },
+        data: filtered.map(p => [p.settlementDate, p.rrp]),
+        z: 10,
+      });
+    }
   }
 
   return {
@@ -96,7 +106,7 @@ function updateKpi(container, stack, priceSeries) {
   const kpiRow = container.querySelector('.kpi-row');
   if (!kpiRow) return;
 
-  const { totalByPeriod } = stack;
+  const { totalByPeriod, capacityByFuel } = stack;
   if (totalByPeriod.length === 0) {
     kpiRow.innerHTML = '';
     return;
@@ -104,6 +114,10 @@ function updateKpi(container, stack, priceSeries) {
 
   const currentGen = Math.round(totalByPeriod[totalByPeriod.length - 1]);
   const peakGen = Math.round(Math.max(...totalByPeriod));
+
+  // Total installed capacity
+  const totalCapacity = Object.values(capacityByFuel || {}).reduce((s, v) => s + v, 0);
+  const utilPct = totalCapacity > 0 ? ((currentGen / totalCapacity) * 100).toFixed(1) : null;
 
   // Current price from pulse data (latest with a price)
   let currentPrice = null;
@@ -121,6 +135,13 @@ function updateKpi(container, stack, priceSeries) {
       </div>`
     : '';
 
+  const utilHtml = utilPct != null
+    ? `<div class="kpi">
+        <span class="kpi-label">Capacity Utilization</span>
+        <span class="kpi-value" style="color:#6C3078">${utilPct}%</span>
+      </div>`
+    : '';
+
   kpiRow.innerHTML = `
     <div class="kpi">
       <span class="kpi-label">Current Generation</span>
@@ -128,13 +149,14 @@ function updateKpi(container, stack, priceSeries) {
     </div>
     ${priceHtml}
     <div class="kpi">
-      <span class="kpi-label">Peak Generation (2d)</span>
+      <span class="kpi-label">Peak Generation (24h)</span>
       <span class="kpi-value" style="color:#3379bf">${peakGen.toLocaleString()} MW</span>
     </div>
+    ${utilHtml}
   `;
 }
 
-const fetchIntervals96 = (signal) => wemApi.getIntervals96(signal);
+const fetchGeneration = (signal) => wemApi.getGeneration(signal);
 const fetchFacilityMeta = (signal) => wemApi.getFacilityMeta(signal);
 const fetchPulse = (signal) => wemApi.getPulse(signal);
 
@@ -148,11 +170,11 @@ export function renderWaDispatch(container, cleanupFns) {
   const ctrl = new ChartController(container.querySelector('.chart-box'));
 
   const render = () => {
-    const intState = wemIntervals96.get();
+    const genState = wemGeneration.get();
     const metaState = wemFacilityMeta.get();
-    if (!intState.data || !metaState.data) return;
+    if (!genState.data || !metaState.data) return;
 
-    const stack = buildDispatchStack(intState.data, metaState.data);
+    const stack = buildDispatchStack(genState.data, metaState.data);
     if (stack.periods.length === 0) return;
 
     // Price overlay is optional — render chart even without it
@@ -168,24 +190,24 @@ export function renderWaDispatch(container, cleanupFns) {
     updateKpi(container, stack, priceSeries);
   };
 
-  const unsubInt = wemIntervals96.listen(render);
+  const unsubGen = wemGeneration.listen(render);
   const unsubMeta = wemFacilityMeta.listen(render);
   const unsubPulse = wemPulse.listen(render);
 
-  fetchIfStale(wemIntervals96, fetchIntervals96, WEM_FRESHNESS);
+  fetchIfStale(wemGeneration, fetchGeneration, WEM_GEN_FRESHNESS);
   fetchIfStale(wemFacilityMeta, fetchFacilityMeta, STATIC_FRESHNESS);
   fetchIfStale(wemPulse, fetchPulse, WEM_FRESHNESS);
   render();
 
-  const unregInt = registerPoll('wem:intervals96', wemIntervals96, fetchIntervals96, WEM_FRESHNESS);
+  const unregGen = registerPoll('wem:generation', wemGeneration, fetchGeneration, WEM_GEN_FRESHNESS);
   const unregMeta = registerPoll('wem:facilityMeta', wemFacilityMeta, fetchFacilityMeta, STATIC_FRESHNESS);
   const unregPulse = registerPoll('wem:pulse', wemPulse, fetchPulse, WEM_FRESHNESS);
 
   cleanupFns.push(() => {
-    unsubInt();
+    unsubGen();
     unsubMeta();
     unsubPulse();
-    unregInt();
+    unregGen();
     unregMeta();
     unregPulse();
     ctrl.dispose();

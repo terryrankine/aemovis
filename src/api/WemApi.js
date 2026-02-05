@@ -66,11 +66,6 @@ class WemApi {
   async getDpvDemand(signal) {
     return this._getCsv('public/infographic/dpvopdemand/distributed-pv_opdemand.csv', signal);
   }
-
-  // ── Facility intervals (last 96 × 30-min intervals, ~2 days) ────
-  async getIntervals96(signal) {
-    return this._getCsv('public/infographic/facility-intervals-last96.csv', signal);
-  }
 }
 
 export const wemApi = new WemApi();

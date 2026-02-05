@@ -19,6 +19,10 @@ import { renderWemOutages }           from './pages/WemOutages.js';
 import { renderEssPricing }           from './pages/EssPricing.js';
 import { renderDpvDemand }            from './pages/DpvDemand.js';
 import { renderWaDispatch }          from './pages/WaDispatch.js';
+import { renderFcasPrices }          from './pages/FcasPrices.js';
+import { renderNetInterchange }      from './pages/NetInterchange.js';
+import { renderWaReserves }          from './pages/WaReserves.js';
+import { renderWaGenMap }            from './pages/WaGenMap.js';
 
 const PAGES = [
   { id: 'dispatch',   label: 'Dispatch Overview',     render: renderDispatchOverview },
@@ -28,10 +32,14 @@ const PAGES = [
   { id: 'renewable',  label: 'Renewable Penetration', render: renderRenewablePenetration },
   { id: 'avgprice',   label: 'Average Price',         render: renderAveragePrice },
   { id: 'outlook',    label: '7-Day Outlook',         render: renderSevenDayOutlook },
+  { id: 'fcas',       label: 'FCAS Prices',           render: renderFcasPrices },
+  { id: 'interchange',label: 'Net Interchange',       render: renderNetInterchange },
   { id: 'outages',    label: 'WEM Outages',           render: renderWemOutages },
-  { id: 'ess',        label: 'WEM Energy Price',       render: renderEssPricing },
+  { id: 'ess',        label: 'WEM Energy Price',      render: renderEssPricing },
   { id: 'dpv',        label: 'DPV vs Demand',         render: renderDpvDemand },
   { id: 'wadispatch', label: 'WA Dispatch',           render: renderWaDispatch },
+  { id: 'wareserves', label: 'WA Reserves',           render: renderWaReserves },
+  { id: 'wamap',      label: 'WA Gen Map',            render: renderWaGenMap },
 ];
 
 let cleanupFns = [];

@@ -36,7 +36,6 @@ export const wemPulse              = make();
 export const wemGeneration         = make();
 export const wemFacilityMeta       = make();
 export const wemDpvDemand          = make();
-export const wemIntervals96        = make();
 
 // ── Lookup table: string key → atom ─────────────────────────────────
 // Used by poller to iterate active keys.
@@ -52,5 +51,4 @@ export const ATOM_REGISTRY = {
   'wem:generation':         wemGeneration,
   'wem:facilityMeta':       wemFacilityMeta,
   'wem:dpvDemand':          wemDpvDemand,
-  'wem:intervals96':        wemIntervals96,
 };

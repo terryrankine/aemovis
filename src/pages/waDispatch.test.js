@@ -98,6 +98,31 @@ describe('WaDispatch buildOption', () => {
     expect(opt.xAxis.type).toBe('time');
   });
 
+  it('omits price series when price dates are outside generation range', () => {
+    const prices = [
+      { settlementDate: '2026-03-01 08:00:00', rrp: 45.0 },
+      { settlementDate: '2026-03-01 08:30:00', rrp: 50.0 },
+    ];
+    const opt = buildOption(makeStack(), prices);
+    const priceLine = opt.series.find(s => s.name === 'Price');
+    expect(priceLine).toBeUndefined();
+  });
+
+  it('includes only price points within generation time range', () => {
+    const prices = [
+      { settlementDate: '2026-02-03 08:00:00', rrp: 40.0 },  // before range
+      { settlementDate: '2026-02-04 08:00:00', rrp: 45.0 },  // in range
+      { settlementDate: '2026-02-04 08:30:00', rrp: 50.0 },  // in range
+      { settlementDate: '2026-02-05 08:00:00', rrp: 55.0 },  // after range
+    ];
+    const opt = buildOption(makeStack(), prices);
+    const priceLine = opt.series.find(s => s.name === 'Price');
+    expect(priceLine).toBeDefined();
+    expect(priceLine.data).toHaveLength(2);
+    expect(priceLine.data[0][1]).toBe(45.0);
+    expect(priceLine.data[1][1]).toBe(50.0);
+  });
+
   it('puts Other fuel last', () => {
     const stack = {
       periods: ['2026-02-04 08:00:00'],
