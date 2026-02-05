@@ -30,14 +30,26 @@ const FUEL_MAP = {
 };
 function mapFuel(f) { return FUEL_MAP[f] || f; }
 
-// Coordinate corrections for facilities with wrong lat/lon in AEMO metadata
-// AEMO lists these at Perth CBD (-31.95, 115.86) instead of actual locations
-// Real coordinates from Global Energy Observatory & Wikipedia
+// Coordinate corrections for facilities with wrong or missing lat/lon in AEMO metadata
+// Sources: Global Energy Observatory, Wikipedia, planning documents
 const COORD_FIXES = {
+  // Wrong coordinates (Perth CBD error -31.95, 115.86)
   'COCKBURN_CCG1':           { lat: -32.200, lon: 115.774 },  // Naval Base, 42 Hope Valley Rd
   'KWINANA_GT2':             { lat: -32.228, lon: 115.773 },  // Kwinana industrial area
   'KWINANA_GT3':             { lat: -32.228, lon: 115.773 },  // Kwinana industrial area
   'PERTHENERGY_KWINANA_GT1': { lat: -32.228, lon: 115.773 },  // Kwinana industrial area
+
+  // Missing coordinates (future/commissioning facilities)
+  'COLLIE_BESS2':            { lat: -33.340, lon: 116.260 },  // Collie Power Station site
+  'COLLIE_ESR1':             { lat: -33.340, lon: 116.260 },  // Collie Power Station site
+  'COLLIE_ESR4':             { lat: -33.340, lon: 116.260 },  // Collie Power Station site
+  'COLLIE_ESR5':             { lat: -33.340, lon: 116.260 },  // Collie Power Station site
+  'FLATROCKS_WF1':           { lat: -33.950, lon: 117.050 },  // ~30km SW of Kojonup
+  'KWINANA_ESR1':            { lat: -32.228, lon: 115.773 },  // Kwinana Power Station site
+  'KWINANA_ESR2':            { lat: -32.228, lon: 115.773 },  // Kwinana Power Station site
+  'PHOENIX_KWINANA_WTE_G1':  { lat: -32.210, lon: 115.779 },  // East Rockingham WTE
+  'PRDSO_WALPOLE_HG1':       { lat: -34.980, lon: 116.730 },  // Walpole township
+  'SBSOLAR1_CUNDERDIN_PV1':  { lat: -31.656, lon: 117.276 },  // Near Cunderdin
 };
 
 /**
